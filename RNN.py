@@ -27,7 +27,7 @@ class RNN(object):
         self.tau = float(tau)
         self.f = f
         self.fp = fp
-        self.set_h0(np.zeros(Nh))
+        self.h0 = np.zeros(self.Nh)
         #TODO: instead of Wx,Wh,Wy pass a single tuple (W_1, ..., W_R) to allow for arbitrary R-layer networks
         #TODO: abstract the cost function and the nonlin to separate classes
 
@@ -41,6 +41,8 @@ class RNN(object):
     def get_weights(self):
         return np.copy(self.Wx), np.copy(self.Wh), np.copy(self.Wy)    
           
+    def get_size(self):
+        return self.Nx, self.Nh, self.Ny    
     
     def random_init_weights(self, Nx, Nh, Ny):
         g = 1.5
@@ -49,10 +51,6 @@ class RNN(object):
         Wy = np.random.normal(0, np.sqrt(g/Nh), (Ny, Nh))
         
         return Wx,Wh,Wy
-    
-    
-    def set_h0(self, h0):
-        self.h0 = h0
     
     
     def y_out(self, h):
@@ -157,25 +155,41 @@ class RNN(object):
         return loss
     
     
-    @staticmethod
     def save(self, filename):
         raise NotImplemented
     
     
-    @staticmethod
-    def load(filename):
+    @classmethod
+    def load(cls, filename):
         raise NotImplemented
 
 
 
 class AugRNN(RNN):
-    """Augmentable RNN. Allows freezing weights during training, reading out from a subnetwork of the hidden units
+    """Augmentable RNN. Features:
+        - adding neurons
+        - freezing weights during training
+        - reading out from a subnetwork of the hidden units
     """
+        
     def __init__(self, Nx, Nh, Ny, tau, f=np.tanh, fp=sech2):
         super(AugRNN, self).__init__(Nx, Nh, Ny, tau, f, fp)
         self.freeze_weights(None,None,None)
-    
-            
+        self.addNx=0
+        self.addNh=0
+        self.addNy=0        
+        
+    @classmethod
+    def augment(cls, rnn, addNx=0, addNh=0, addNy=0):
+        augRnn = cls(rnn.Nx+addNx, rnn.Nh+addNh, rnn.Ny+addNy, rnn.tau, rnn.f, rnn.fp)
+        augRnn.addNx, augRnn.addNh, augRnn.addNy = addNx, addNh, addNy
+        
+        baseWx, baseWh, baseWy = rnn.get_weights()
+        augRnn.set_weights(*augRnn.random_init_weights(augRnn.Nx,augRnn.Nh,augRnn.Ny))
+        augRnn.set_subnetwork_weights(baseWx, baseWh, baseWy)        
+        return augRnn
+        
+        
     def set_subnetwork_weights(self, Wx, Wh, Wy):
         """Sets the weights for the top-left corners of the weight matrices
         """
@@ -207,7 +221,7 @@ class AugRNN(RNN):
        
        
     def feedforward_subnetwork(self, x, hIdx):
-        tmpWy = np.copy(self.Wy)
+        tmpWy = np.copy(self.Wy) #TODO: this is mostly a hack, fix it
         self.Wy = np.zeros(tmpWy.shape)
         self.Wy[:,hIdx] = tmpWy[:,hIdx]
         y,h = self.feedforward(x)
@@ -215,8 +229,20 @@ class AugRNN(RNN):
         return y, h
     
     
+    def feedforward_base(self, x):
+        raise NotImplemented
+        
+        
+    def feedforward_new(self, x):
+        raise NotImplemented
+    
+    
 
 class RNNplotter():
+    def __init_(self, rnn):
+        self.rnn = rnn
+            
+        
     @staticmethod
     def plot_hidden(h, hIdx=None, color=['b'], ax=None, title=''):
         _,Nh = h.shape
@@ -237,6 +263,7 @@ class RNNplotter():
         ax.set_ylabel('Hidden unit')
         ax.set_title(title)
         return ax
+    
     
     @staticmethod
     def plot_weights(Wx, Wh, Wy, title=''):        

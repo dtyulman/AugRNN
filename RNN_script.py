@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from RNN import RNN, AugRNN, RNNplotter
 
 #%% Train 
-Nh = 50
 Nx = 1
+Nh = 50
 Ny = 1
 T = 400
 tau = 10
@@ -15,7 +15,8 @@ yTrain = np.sin(np.linspace(0,8*np.pi,T)).reshape(T,Ny)
 
 base = RNN(Nx,Nh,Ny,tau)
 base_Winit = base.get_weights()
-loss = base.sgd(x,yTrain)
+loss = base.sgd(x, yTrain)
+
 #%% Test and plot
 fig, ((ax1,ax2),(ax3,ax4)) = plt.subplots(2,2)
 
@@ -43,15 +44,14 @@ ax4.plot(xTest)
 ax4.set_title('test (long)')
 ax4.legend(['yTest', 'x'])
 
+
 RNNplotter.plot_hidden(hTest, title='Base network')
 
 ###################################################################
 #%% Add neurons to base RNN
-addNh = 50
-aug = AugRNN(Nx, Nh+addNh, Ny, tau)
-aug.set_subnetwork_weights(*base.get_weights())
+addNh=50
+aug = AugRNN.augment(base, addNh=addNh)
 frz = copy.deepcopy(aug) #will need this later
-
 aug_Winit = aug.get_weights()
 
 description = 'Augmented, untrained'
@@ -61,9 +61,9 @@ description = 'Augmented, untrained'
 RNNplotter.plot_weights(*aug_Winit, title=description)
 
 
-#%% Train augmented network and a control for comparison
+#%% Build a control for comparison
 ctrl = AugRNN(Nx, Nh+addNh, Ny, tau)
-ctrl.set_weights(*aug.get_weights()) #initialize weights to be the same as aug for "added" nodes
+ctrl.set_weights(*aug_Winit) #initialize weights to be the same as aug for "added" nodes
 ctrl.set_subnetwork_weights(*base_Winit) #initialize weights to be the same as the init of base for "base" nodes
 ctrl_Winit = ctrl.get_weights()
 
@@ -72,7 +72,7 @@ xTest = np.ones((5000,Nx))
 _,_,_,hTest = RNNplotter.plot_full_base_new_readout(xTest, Nh, addNh, aug, description)
 RNNplotter.plot_hidden(hTest, color=np.concatenate([np.tile('b', Nh), np.tile('r', addNh)]), title=description)
 
-#%%
+#%% Train augmented network control
 loss_aug = aug.sgd(x, yTrain)
 loss_ctrl = ctrl.sgd(x, yTrain)
 
