@@ -3,3 +3,4 @@ results/
 *.pptx
 *.png
 *.pyc
+tmp.py
