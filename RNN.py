@@ -6,6 +6,7 @@ np.seterr(over='raise')
 
 import matplotlib.pyplot as plt
 from custom_utils import Timer
+import cPickle
 
 
 class Loss:
@@ -17,7 +18,7 @@ class NonLin:#TODO
         pass    
     f = np.tanh
     def fp(self, x): #sech^2(x):
-        return (1./np.cosh(x))**2    
+        return 1.-np.tanh(x)**2   
 
 
 class L2(object):
@@ -32,10 +33,38 @@ class L2(object):
         """Takes in all the weights from the RNN, returns the regularization term for each weight"""
         return self.lmbda*Wx, self.lmbda*Wh, self.lmbda*Wy
         
-def weights_to_vector(Wx,Wh,Wy):
-    W = np.concatenate((Wx.ravel(), Wh.ravel(), Wy.ravel()))
-    return W
     
+def weights_to_vector(Wx,Wh,Wy):
+    W = np.concatenate((Wx.flatten(), Wh.flatten(), Wy.flatten()))
+    return W
+
+
+def vector_to_weights(W, Nx, Nh, Ny):
+    ptr1 = 0
+    ptr2 = Nx*Nh
+    Wx = W[ptr1:ptr2].reshape(Nh, Nx)
+    
+    ptr1 = ptr2
+    ptr2 = ptr2+Nh*Nh
+    Wh = W[ptr1:ptr2].reshape(Nh, Nh)
+    
+    ptr1 = ptr2
+    ptr2 = ptr2+Ny*Nh
+    Wy = W[ptr1:ptr2].reshape(Ny, Nh)
+    
+    return Wx, Wh, Wy
+
+
+def numerical_gradient(f, x, eps=1e-6):   
+    """f is f(x), x=[x1,..,xN] is a vector"""
+    g = np.full((f(x).size, x.size), np.nan) #TODO: switch to np.empty after testing
+    for i in xrange(x.size):
+        eps_i = np.zeros(x.size)
+        eps_i[i] = eps/2.           
+        g[:,i] = (f(x+eps_i) - f(x-eps_i))/eps
+    return g.squeeze()
+    
+
 class HessEWC(object):
     """
     Similar to Elastic Weight Consolidation (Kirkpatrick et al. 2017), 
@@ -45,45 +74,31 @@ class HessEWC(object):
     def __init__(self, lmbda, rnn, data, H=None):
         self.lmbda = lmbda
         self.rnn = rnn
-        self.W_old = weights_to_vector(*rnn.get_weights())
+        self.Wx_old, self.Wh_old, self.Wy_old = rnn.get_weights()
+        self.W_old = weights_to_vector(self.Wx_old, self.Wh_old, self.Wy_old)
         if H is None:
             self.H = self.hessian(rnn, data.x, data.y)
         else:
             self.H = H #for debugging, pass in the hessian
 
-        
-    
+            
     def vector_to_weights(self, W):
-        ptr1 = 0
-        ptr2 = self.rnn.Nx*self.rnn.Nh
-        Wx = W[ptr1:ptr2].reshape(self.rnn.Nh, self.rnn.Nx)
-        
-        ptr1 = ptr2
-        ptr2 = ptr2+self.rnn.Nh*self.rnn.Nh
-        Wh = W[ptr1:ptr2].reshape(self.rnn.Nh, self.rnn.Nh)
-        
-        ptr1 = ptr2
-        ptr2 = ptr2+self.rnn.Ny*self.rnn.Nh
-        Wy = W[ptr1:ptr2].reshape(self.rnn.Ny, self.rnn.Nh)
-        
-        return Wx, Wh, Wy
-    
+        return vector_to_weights(W, self.rnn.Nx, self.rnn.Nh, self.rnn.Ny)
+            
             
     def hessian(self, rnn, x, yTrue):                      
+        return self.hessian_outer_product_approx(rnn, x, yTrue)
+    
+    def hessian_numerical(self, rnn, x, yTrue):   
         def dSdW(W):
             Wx,Wh,Wy=self.vector_to_weights(W)
             perturbRnn = RNN(Wx,Wh,Wy, rnn.tau, rnn.f, rnn.fp)
             dSdWx, dSdWh, dSdWy = perturbRnn.backprop_thru_time(x,yTrue)
-            dSdWx2, dSdWh2, dSdWy2 = self.backprop_numerical(rnn, x,yTrue)
-            
-            np.sum(np.abs(dSdWx-dSdWx2)) + np.sum(np.abs(dSdWh-dSdWh2)) + np.sum(np.abs(dSdWy-dSdWy2))
-            
             return weights_to_vector(dSdWx, dSdWh, dSdWy)
         
         with Timer('Numerical Hessian'):
-            H = self.numerical_gradient(dSdW, self.W_old)         
+            H = numerical_gradient(dSdW, self.W_old)         
         return H
-    
     
     
     def backprop_numerical(self, rnn, x, yTrue):
@@ -92,23 +107,23 @@ class HessEWC(object):
              perturbRnn = RNN(Wx,Wh,Wy, rnn.tau, rnn.f, rnn.fp)
              return perturbRnn.loss(perturbRnn.feedforward(x)[0], yTrue)
          
-        dSdW = self.numerical_gradient(E, self.W_old) 
+        dSdW = numerical_gradient(E, self.W_old, 1e-10) 
         return self.vector_to_weights(dSdW)
-     
-    @staticmethod
-    def numerical_gradient(f, x, eps=np.finfo(np.float).eps*128):   
-        """f is f(x), x=[x1,..,xN] is a vector"""
-        g = np.full((f(x).size, x.size), np.nan) #TODO: switch to np.empty after testing
-        for i in xrange(x.size):
-            eps_i = np.zeros(x.size)
-            eps_i[i] = eps/2           
-            g[:,i] = (f(x+eps_i) - f(x-eps_i))/eps
-        return g
-            
+                 
     
-    def hessian_outer_product_approx(self, rnn):
-        dydW = weights_to_vector(rnn.backprop_thru_time())
-        return np.outer(dydW, dydW)
+    def hessian_outer_product_approx(self, rnn, x, yTrue):
+        y,_ = rnn.feedforward(x)
+        T = len(y)
+        e = y-yTrue
+        
+        n = rnn.Nh*rnn.Nx + rnn.Nh*rnn.Nh + rnn.Nh*rnn.Ny 
+        H = np.zeros((n,n))
+        dLdWx,dLdWh,dLdWy = rnn.backprop_thru_time_double_loop(x, yTrue)
+        for t in xrange(T):
+            dLdW = weights_to_vector(dLdWx[t], dLdWh[t], dLdWy[t])
+            H += np.outer(dLdW, dLdW)/e[t]**2 #TODO: assumes e[t] is scalar
+        
+        return H
     
     
     def hessian_diag_approx(self, rnn):
@@ -116,39 +131,24 @@ class HessEWC(object):
     
     
     def f(self, Wx, Wh, Wy):
-        return np.sum(np.dot( self.H, (weights_to_vector(Wx,Wh,Wy)-self.W_old)**2 ))
-     
+        diff = weights_to_vector(Wx,Wh,Wy)-self.W_old
+        L = self.lmbda/2 * np.sum( np.dot(diff, np.dot(self.H, diff)) )
+        return L
         
     def fp(self, Wx, Wh, Wy):
-        assert(np.all(np.sum(self.H,0)==np.sum(self.H,1))) #sanity check (remove after testing)  
+#        assert(np.all(np.sum(self.H,0)==np.sum(self.H,1))) #sanity check (remove after testing)  
         Nh, Nx = Wx.shape
         Ny, Nh2 = Wy.shape
         assert(Nh==Nh2) #sanity
         assert(Nx==1)
         assert(Ny==1)
         
-        Hx, Hh, Hy = self.vector_to_weights(np.sum(self.H,1))
-        return (self.lmbda * Hx * (self.Wx_old-Wx),
-                self.lmbda * Hh * (self.Wh_old-Wh),
-                self.lmbda * Hy * (self.Wy_old-Wy))
-        
-        
-        
-
-#global flag 
-#flag = True
+        return self.vector_to_weights( self.lmbda*np.dot(self.H, weights_to_vector(Wx,Wh,Wy)-self.W_old) )
+ 
+            
 def sech2(x):
-#    global flag
-#    MAX = 710.47586007
-#    try:
-    return (1./np.cosh(x))**2
-#    except:
-#        if flag:
-#            print 'OVERFLOW'
-#            flag=False
-#        x[np.abs(x)>=MAX] = np.infty
-#        return (1./np.cosh(x))**2
-#    
+    return 1.-np.tanh(x)**2
+  
 
 class RNN(object):  
     def __init__(self, Nx, Nh, Ny, tau, f=np.tanh, fp=sech2, reg=None, name=''):
@@ -170,6 +170,7 @@ class RNN(object):
         self.reg  = reg #regularizer
         self.h0   = np.zeros(self.Nh)
         self.name = name #for plotting, using str(), etc
+        self.freeze_weights(None,None,None)
         #TODO: abstract the cost function and the nonlin to separate classes
 
         
@@ -221,38 +222,110 @@ class RNN(object):
         
         z[T-1] = np.dot(self.Wy.T, e[T-1]) #initialize 
         d[T-1] = np.zeros(self.Nh) #undefined 
-        for t in xrange(T-2, -2, -1):           
+        for t in reversed(xrange(-1, T-1)):          
             d[t] = z[t+1] * self.fp( np.dot(self.Wh,h[t])+np.dot(self.Wx,x[t+1]) )            
-            z[t] = (1-1/self.tau)*z[t+1] + ( np.dot(self.Wh.T,d[t]) + np.dot(self.Wy.T,e[t]) )/self.tau 
+            z[t] = (1-1/self.tau)*z[t+1] + ( np.dot(self.Wh.T,d[t]) )/self.tau + np.dot(self.Wy.T,e[t])  
         return z, d, e
     
     
     def backprop_thru_time(self, x, yTrue):
+        return self.backprop_thru_time_lagrange(x, yTrue)
+        
+        
+    def backprop_thru_time_lagrange(self, x, yTrue):
+            T = len(x)
+            y, h = self.feedforward(x)
+            z, d, e = self.lagrange_mult(x, h, y, yTrue) #TODO: abstract out the delta so I can use any loss function
+    
+            dSdWy = -np.einsum('ti,tj',e,h[0:-1])/T #don't sum over initial cond (last element in h)               
+            dSdWh = -np.einsum('ti,tj',d,h)/(T*self.tau)        
+            d = np.concatenate((d[-1].reshape(1,self.Nh), d[0:T-1]))
+            dSdWx = -np.einsum('ti,tj',d,x)/(T*self.tau)           
+            return dSdWx, dSdWh, dSdWy
+    
+    
+    def backprop_thru_time_lagrange_loop(self,x,yTrue):
+        """For validation. This is ~4x slower than using einsum"""
         T = len(x)
         y, h = self.feedforward(x)
         z, d, e = self.lagrange_mult(x, h, y, yTrue)  #TODO: abstract out the delta so I can use any loss function
-
-        dSdWy = -np.einsum('ti,tj',e,h[0:-1])/T #don't sum over initial cond (last element in h)               
-        dSdWh = -np.einsum('ti,tj',d,h)/(T*self.tau)        
-        d = np.concatenate((d[-1].reshape(1,self.Nh), d[0:T-1]))
-        dSdWx = -np.einsum('ti,tj',d,x)/(T*self.tau)
         
-#        if np.any(np.abs(dSdWh)>10000) or np.any(np.abs(dSdWy)>10000) or np.any(np.abs(dSdWx)>10000):
-#            print 'exploding? gradient'
-#            print np.min(dSdWx), np.min(dSdWh), np.min(dSdWy)
-#            print np.max(dSdWx), np.max(dSdWh), np.max(dSdWy)
-#            pass
-#        if np.any(np.abs(dSdWh)<.0001) or np.any(np.abs(dSdWy)<.0001) or np.any(np.abs(dSdWx)<.0001):
-#            print 'vanishing? gradient'
-#            print np.min(dSdWx), np.min(dSdWh), np.min(dSdWy)
-#            print np.max(dSdWx), np.max(dSdWh), np.max(dSdWy)
-#            pass
-            
+        dSdWx = np.zeros(self.Wx.shape)
+        dSdWh = np.zeros(self.Wh.shape)
+        dSdWy = np.zeros(self.Wy.shape)
+        for t in range(T):
+           dSdWx += np.outer( z[t] * self.fp( np.dot(self.Wh,h[t-1])+np.dot(self.Wx,x[t]) ), x[t])
+           dSdWh += np.outer( z[t] * self.fp( np.dot(self.Wh,h[t-1])+np.dot(self.Wx,x[t]) ), h[t-1])
+           dSdWy += np.outer( e[t], h[t])        
+        dSdWx = -dSdWx/(T*self.tau)
+        dSdWh = -dSdWh/(T*self.tau)
+        dSdWy = -dSdWy/T     
         return dSdWx, dSdWh, dSdWy
+       
+        
+    def backprop_thru_time_chain(self, x, yTrue):
+        """Equivalent (with some finite-precusion error) to backprop_thru_time_lagrange but follows the 
+        more common chain-rule equations (e.g. see Deep Learning by Goodfellow et al.), instead of the
+        Lagrange multiplier formalism (as in LeCun 1988). Note this is slower because of the for-loop 
+        instead of einsum"""
+        T = len(x)
+        y, h = self.feedforward(x)
+        e = y-yTrue
+        
+        dLdWx = np.zeros(self.Wx.shape)
+        dLdWh = np.zeros(self.Wh.shape)
+        dLdWy = np.zeros(self.Wy.shape)
+    
+        d = np.zeros(h[0].shape) #delta, i.e. delta_i(t) = dL/dh_i(t)
+        for t in reversed(xrange(T)): 
+            dLdWy += np.outer( e[t], h[t] )
+
+            d += np.dot(self.Wy.T, e[t]) #d[t] is now complete here (after precomp from prev iter, see below) 
+            fp = self.fp( np.dot(self.Wh,h[t-1])+np.dot(self.Wx,x[t]) ) / self.tau         
+            d_fp = d * fp
+            
+            dLdWh += np.outer( d_fp, h[t-1] )            
+            dLdWx += np.outer( d_fp, x[t] )
+            
+            dhdh = np.matmul(self.Wh.T, np.diag(fp)) + np.eye(self.Nh)*(1-1/self.tau) #dh_j(t+1)/dh_i(t)
+            d = np.dot(dhdh, d) #precomp part of d[t-1] (i.e. for next iter) 
+            #d = np.dot(self.Wh.T, d_fp) + d * (1-1/self.tau) #note this is equivalent cf. z[t] in lagrange_mult()                 
+           
+        dLdWy = dLdWy/T 
+        dLdWx = dLdWx/T
+        dLdWh = dLdWh/T
+        
+        return dLdWx, dLdWh, dLdWy
+
+    
+    def backprop_thru_time_double_loop(self, x, yTrue):
+        """Slower O(n^2), but explicitly computes E(t) for every t along the way, cf. O(n) for the standard bptt"""
+        T = len(x)
+        y, h = self.feedforward(x)
+        e = y-yTrue
+        
+        dLdWx = []
+        dLdWh = []
+        dLdWy = []        
+        for t in xrange(T): 
+            dLdWy.append( np.outer(e[t],h[t]) )
+            
+            dLdWx.append( np.zeros(self.Wx.shape) )
+            dLdWh.append( np.zeros(self.Wh.shape) )
+            d = np.dot(self.Wy.T, e[t]) #delta, i.e. delta_i(t') = dL(t)/dh_i(t')
+            for tp in reversed(xrange(t+1)):
+                fp = self.fp( np.dot(self.Wh,h[tp-1])+np.dot(self.Wx,x[tp]) ) / self.tau         
+                d_fp = d * fp
+                
+                dLdWh[t] += np.outer( d_fp, h[tp-1] )            
+                dLdWx[t] += np.outer( d_fp, x[tp] )
+                
+                dhdh = np.matmul(self.Wh.T, np.diag(fp)) + np.eye(self.Nh)*(1-1/self.tau) #dh_j(t'+1)/dh_i(t')
+                d = np.dot(dhdh, d) #comp d[t-1] for next iter 
+                
+        return dLdWx, dLdWh, dLdWy
     
 
-                
-    
     def loss(self, y, yTrue): 
         """Squared error loss"""
         T = len(y)
@@ -260,6 +333,17 @@ class RNN(object):
         if self.reg is not None:
             L = L + self.reg.f(self.Wx, self.Wh, self.Wy)
         return L
+
+
+    def action(self, y, h, z, yTrue):
+        """Loss plus Lagrange multiplier to ensure continuous dynamics, averaged over time"""
+                
+        
+    def freeze_weights(self, freezeWx=None, freezeWh=None, freezeWy=None):
+        self.freezeWx = freezeWx
+        self.freezeWh = freezeWh
+        self.freezeWy = freezeWy
+    
     
     def sgd_step(self, x, yTrain, eta):
         dSdWx, dSdWh, dSdWy = self.backprop_thru_time(x, yTrain) 
@@ -268,6 +352,13 @@ class RNN(object):
             dRx, dRh, dRy = self.reg.fp(self.Wx, self.Wh, self.Wy)
             dSdWx, dSdWh, dSdWy = dSdWx+dRx, dSdWh+dRh, dSdWy+dRy
             
+        if self.freezeWx is not None:
+            dSdWx[self.freezeWx] = 0
+        if self.freezeWh is not None:
+            dSdWh[self.freezeWh] = 0
+        if self.freezeWy is not None:
+            dSdWy[self.freezeWy] = 0
+        
         self.Wx -= eta[0]*dSdWx
         self.Wh -= eta[1]*dSdWh
         self.Wy -= eta[2]*dSdWy
@@ -311,12 +402,35 @@ class RNN(object):
     
     
     def save(self, filename):
-        raise NotImplemented
+        """Save the neural network to the file ``filename``."""
+        data = {'weights': self.get_weights(),
+                'tau': self.tau,
+                'nonlin': self.f,
+#                'nonlin_derivative': self.fp, #TODO: figure out how to save this properly 
+                'regularizer': self.reg,
+                'name': self.name
+                }
+        with open(filename, 'w') as f:
+            cPickle.dump(data, f)
     
     
     @classmethod
     def load(cls, filename):
-        raise NotImplemented
+        """Load a neural network from the file ``filename``.  Returns an
+        instance of RNN.
+        """
+        with open(filename, 'r') as f:
+            data = cPickle.load(f)
+        
+        Wx, Wh, Wy = data['weights']
+        tau = data['tau']
+        nonlin = data['nonlin']
+        nonlin_derivative = sech2 #data['nonlin_derivative'] #TODO
+        reg = data['regularizer']
+        name = data['name']
+        
+        rnn = cls(Wx, Wh, Wy, tau, f=nonlin, fp=nonlin_derivative, reg=reg, name=name) 
+        return rnn
 
 
 class SubRNN(RNN):
@@ -393,26 +507,6 @@ class AugRNN(SubRNN):
         return augRnn
         
           
-    def freeze_weights(self, freezeWx, freezeWh, freezeWy):
-        self.freezeWx = freezeWx
-        self.freezeWh = freezeWh
-        self.freezeWy = freezeWy
-         
-           
-    def sgd_step(self, x, yTrain, eta):
-        dSdWx, dSdWh, dSdWy = self.backprop_thru_time(x, yTrain)
-       
-        if self.freezeWx is not None:
-            dSdWx[self.freezeWx] = 0
-        if self.freezeWh is not None:
-            dSdWh[self.freezeWh] = 0
-        if self.freezeWy is not None:
-            dSdWy[self.freezeWy] = 0
-        
-        self.Wx -= eta[0]*dSdWx
-        self.Wh -= eta[1]*dSdWh
-        self.Wy -= eta[2]*dSdWy
-
 
 class MplPlotter():
     """Plots RNN results using matplotlib (mpl)"""    

@@ -43,24 +43,7 @@ def augment_net(net, addN, connType):
 
 
 
-def backprop_thru_time_loop(self,x,yTrue):
-    """For validation. This is ~4x slower than using einsum"""
-    T = len(x)
-    y, h = self.feedforward(x)
-    z, d, e = self.lagrange_mult(x, h, y, yTrue)  #TODO: abstract out the delta so I can use any loss function
-    
-    dSdWx = 0
-    dSdWh = 0
-    dSdWy = 0
-    for t in range(T):
-       dSdWh += np.outer( z[t] * self.fp( np.dot(self.Wh,h[t-1])+np.dot(self.Wx,x[t]) ), h[t-1])
-       dSdWx += np.outer( z[t] * self.fp( np.dot(self.Wh,h[t-1])+np.dot(self.Wx,x[t]) ), x[t])
-       dSdWy += np.outer( e[t], h[t])        
-    dSdWx = -dSdWx/(T*self.tau)
-    dSdWh = -dSdWh/(T*self.tau)
-    dSdWy = -dSdWy/T 
-    
-    return dSdWx, dSdWh, dSdWy
+
 
 
 
