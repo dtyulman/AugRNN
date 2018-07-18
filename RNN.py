@@ -9,11 +9,11 @@ from custom_utils import Timer
 import cPickle
 
 
-class Loss:
+class Loss: #TODO
     pass
 
 
-class NonLin:#TODO
+class NonLin: #TODO
     def __init__(self, nonlin):
         pass    
     f = np.tanh
@@ -40,17 +40,17 @@ def weights_to_vector(Wx,Wh,Wy):
 
 
 def vector_to_weights(W, Nx, Nh, Ny):
-    ptr1 = 0
-    ptr2 = Nx*Nh
-    Wx = W[ptr1:ptr2].reshape(Nh, Nx)
+    l = 0 #pointer to leftmost entry of Wx
+    r = Nx*Nh #rightmost
+    Wx = W[l:r].reshape(Nh, Nx)
     
-    ptr1 = ptr2
-    ptr2 = ptr2+Nh*Nh
-    Wh = W[ptr1:ptr2].reshape(Nh, Nh)
+    l = r #leftmost of Wh
+    r = r + Nh*Nh
+    Wh = W[l:r].reshape(Nh, Nh)
     
-    ptr1 = ptr2
-    ptr2 = ptr2+Ny*Nh
-    Wy = W[ptr1:ptr2].reshape(Ny, Nh)
+    l = r #leftmost of Wy
+    r = r + Ny*Nh
+    Wy = W[l:r].reshape(Ny, Nh)
     
     return Wx, Wh, Wy
 
@@ -89,6 +89,7 @@ class HessEWC(object):
     def hessian(self, rnn, x, yTrue):                      
         return self.hessian_outer_product_approx(rnn, x, yTrue)
     
+    
     def hessian_numerical(self, rnn, x, yTrue):   
         def dSdW(W):
             Wx,Wh,Wy=self.vector_to_weights(W)
@@ -99,17 +100,7 @@ class HessEWC(object):
         with Timer('Numerical Hessian'):
             H = numerical_gradient(dSdW, self.W_old)         
         return H
-    
-    
-    def backprop_numerical(self, rnn, x, yTrue):
-        def E(W):
-             Wx,Wh,Wy=self.vector_to_weights(W)
-             perturbRnn = RNN(Wx,Wh,Wy, rnn.tau, rnn.f, rnn.fp)
-             return perturbRnn.loss(perturbRnn.feedforward(x)[0], yTrue)
-         
-        dSdW = numerical_gradient(E, self.W_old, 1e-10) 
-        return self.vector_to_weights(dSdW)
-                 
+        
     
     def hessian_outer_product_approx(self, rnn, x, yTrue):
         y,_ = rnn.feedforward(x)
@@ -121,12 +112,12 @@ class HessEWC(object):
         dLdWx,dLdWh,dLdWy = rnn.backprop_thru_time_double_loop(x, yTrue)
         for t in xrange(T):
             dLdW = weights_to_vector(dLdWx[t], dLdWh[t], dLdWy[t])
-            H += np.outer(dLdW, dLdW)/e[t]**2 #TODO: assumes e[t] is scalar
-        
-        return H
+            H += np.outer(dLdW, dLdW)/e[t]**2 #TODO: assumes e[t] is scalar        
+        return H/T
     
     
-    def hessian_diag_approx(self, rnn):
+    def hessian_diag_approx(self, rnn): 
+        #TODO
         pass
     
     
@@ -135,14 +126,7 @@ class HessEWC(object):
         L = self.lmbda/2 * np.sum( np.dot(diff, np.dot(self.H, diff)) )
         return L
         
-    def fp(self, Wx, Wh, Wy):
-#        assert(np.all(np.sum(self.H,0)==np.sum(self.H,1))) #sanity check (remove after testing)  
-        Nh, Nx = Wx.shape
-        Ny, Nh2 = Wy.shape
-        assert(Nh==Nh2) #sanity
-        assert(Nx==1)
-        assert(Ny==1)
-        
+    def fp(self, Wx, Wh, Wy):    
         return self.vector_to_weights( self.lmbda*np.dot(self.H, weights_to_vector(Wx,Wh,Wy)-self.W_old) )
  
             
@@ -299,7 +283,9 @@ class RNN(object):
 
     
     def backprop_thru_time_double_loop(self, x, yTrue):
-        """Slower O(n^2), but explicitly computes E(t) for every t along the way, cf. O(n) for the standard bptt"""
+        """Slower O(n^2), but explicitly computes E(t) for every t along the way, cf. O(n) for the standard bptt
+        Note that the return values dLdWx,dLdWh, dLdWy are length-T lists (unlike the other bptt methods). To get 
+        the full error, must do e.g. np.sum(dLdWx)/T"""
         T = len(x)
         y, h = self.feedforward(x)
         e = y-yTrue

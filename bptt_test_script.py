@@ -16,10 +16,7 @@ def E(W):
      return perturbRnn.loss( perturbRnn.feedforward(trainData.x)[0], trainData.y )
  
 def Et(W):
-     Wx,Wh,Wy=vector_to_weights(W, 1,50,1)
-     perturbRnn = RNN(Wx,Wh,Wy, rnn.tau)
-     return perturbRnn.loss( perturbRnn.feedforward(trainData.x)[0], trainData.y )
-
+     pass #TODO
  
 with Timer('bptt'):
     dx, dh, dy = rnn.backprop_thru_time_chain(trainData.x, trainData.y)
@@ -36,11 +33,11 @@ with Timer('lagrange'):
 with Timer ('lagrange loop'):
     dxll, dhll, dyll = rnn.backprop_thru_time_lagrange_loop(trainData.x, trainData.y)
 
-#with Timer('numerical'):
-#    dn = numerical_gradient(E, weights_to_vector(*rnn.get_weights()), 1e-6)
-#    dxn, dhn, dyn = vector_to_weights( dn, rnn.Nx, rnn.Nh, rnn.Ny )
+with Timer('numerical'):
+    dn = numerical_gradient(E, weights_to_vector(*rnn.get_weights()), 1e-6)
+    dxn, dhn, dyn = vector_to_weights( dn, rnn.Nx, rnn.Nh, rnn.Ny )
 
-#with Timer('double loop numerical'):
+#with Timer('double loop numerical'): #TODO: numerically test to check that each dE(t)/dW is correct
 #    dn = numerical_gradient(E, weights_to_vector(*rnn.get_weights()), 1e-6)
 #    dxn, dhn, dyn = vector_to_weights( dn, rnn.Nx, rnn.Nh, rnn.Ny )
 #    dxn2_t, dhn2_t, dyn2_t = numerical_gradient(Et, weights_to_vector(*rnn.get_weights()), 1e-6)
@@ -49,11 +46,11 @@ with Timer ('lagrange loop'):
 #    dyn2 = sum(dyn2_t)/T
 
 print '--errors--'
-#print 'chain-num', np.sum(np.abs(dx-dxn)), np.sum(np.abs(dh-dhn)), np.sum(np.abs(dy-dyn))
-#print 'lagr-num', np.sum(np.abs(dxl-dxn)), np.sum(np.abs(dhl-dhn)), np.sum(np.abs(dyl-dyn))
+print 'chain-num', np.sum(np.abs(dx-dxn)), np.sum(np.abs(dh-dhn)), np.sum(np.abs(dy-dyn))
+print 'lagr-num', np.sum(np.abs(dxl-dxn)), np.sum(np.abs(dhl-dhn)), np.sum(np.abs(dyl-dyn))
 print 'chain-lagr', np.sum(np.abs(dx-dxl)), np.sum(np.abs(dh-dhl)), np.sum(np.abs(dy-dyl))
 print 'lagrloop-lagr', np.sum(np.abs(dxll-dxl)), np.sum(np.abs(dhll-dhl)), np.sum(np.abs(dyll-dyl))
-print 'chaindoub-chain', np.sum(np.abs(dx-dx2)), np.sum(np.abs(dh-dh2)), np.sum(np.abs(dy-dy2))
+#print 'chaindoub-chain', np.sum(np.abs(dx-dx2)), np.sum(np.abs(dh-dh2)), np.sum(np.abs(dy-dy2))
 
 
 
